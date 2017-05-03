@@ -62,9 +62,7 @@ def pixel_wise_softmax_2(output_map):
     exponential_map = tf.exp(output_map)
     sum_exp = tf.reduce_sum(exponential_map, 3, keep_dims=True)
     tensor_sum_exp = tf.tile(sum_exp, tf.stack([1, 1, 1, tf.shape(output_map)[3]]))
-    return tf.div(exponential_map,tensor_sum_exp)
-
-
+    return tf.div(exponential_map,tensor_sum_exp, name="pixel_wise_softmax_2")
 
 def cross_entropy(y_,output_map):
     return -tf.reduce_mean(y_*tf.log(tf.clip_by_value(output_map,1e-10,1.0)), name="cross_entropy")
