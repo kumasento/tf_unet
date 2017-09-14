@@ -34,7 +34,7 @@ from tf_unet.layers import (weight_variable, weight_variable_devonc, bias_variab
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(message)s')
 
-def create_conv_net(x, keep_prob, channels, n_class, layers=3, features_root=16, filter_size=3, pool_size=2, summaries=True):
+def create_conv_net(x, keep_prob, channels, n_class, layers=3, features_root=16, filter_size=3, pool_size=2, summaries=True, nx=None, ny=None):
     """
     Creates a new convolutional unet for the given parametrization.
     
@@ -54,8 +54,8 @@ def create_conv_net(x, keep_prob, channels, n_class, layers=3, features_root=16,
                                                                                                            filter_size=filter_size,
                                                                                                            pool_size=pool_size))
     # Placeholder for the input image
-    nx = tf.shape(x)[1]
-    ny = tf.shape(x)[2]
+    nx = tf.shape(x)[1] if nx is None else nx
+    ny = tf.shape(x)[2] if ny is None else ny
     x_image = tf.reshape(x, tf.stack([-1,nx,ny,channels]))
     in_node = x_image
     batch_size = tf.shape(x_image)[0]
@@ -176,26 +176,30 @@ class Unet(object):
     :param cost_kwargs: (optional) kwargs passed to the cost function. See Unet._get_cost for more options
     """
     
-    def __init__(self, channels=3, n_class=2, cost="cross_entropy", cost_kwargs={}, **kwargs):
+    def __init__(self, channels=3, n_class=2, height=None, width=None, cost="cross_entropy", cost_kwargs={}, **kwargs):
         tf.reset_default_graph()
         
         self.n_class = n_class
         self.summaries = kwargs.get("summaries", True)
         
-        self.x = tf.placeholder("float", shape=[None, None, None, channels])
-        self.y = tf.placeholder("float", shape=[None, None, None, n_class])
-        self.keep_prob = tf.placeholder(tf.float32) #dropout (keep probability)
+        self.x = tf.placeholder("float", shape=[None, height, width, channels], name='images')
+        self.keep_prob = tf.placeholder(tf.float32, shape=(), name='keep_prob') #dropout (keep probability)
         
-        logits, self.variables, self.offset = create_conv_net(self.x, self.keep_prob, channels, n_class, **kwargs)
+        logits, self.variables, self.offset = create_conv_net(self.x, self.keep_prob, channels, n_class, nx=height, ny=width, **kwargs)
         
+        pred_shape = logits.get_shape().as_list()
+ 
+        self.y = tf.placeholder("float", shape=[None, pred_shape[1], pred_shape[2], n_class], name='labels')
+
         self.cost = self._get_cost(logits, cost, cost_kwargs)
         
         self.gradients_node = tf.gradients(self.cost, self.variables)
          
+        self.predicter = pixel_wise_softmax_2(logits)
+
         self.cross_entropy = tf.reduce_mean(cross_entropy(tf.reshape(self.y, [-1, n_class]),
                                                           tf.reshape(pixel_wise_softmax_2(logits), [-1, n_class])))
         
-        self.predicter = pixel_wise_softmax_2(logits)
         self.correct_pred = tf.equal(tf.argmax(self.predicter, 3), tf.argmax(self.y, 3))
         self.accuracy = tf.reduce_mean(tf.cast(self.correct_pred, tf.float32))
         
@@ -387,8 +391,9 @@ class Trainer(object):
             return save_path
         
         init = self._initialize(training_iters, output_path, restore)
-        
-        with tf.Session() as sess:
+        config = tf.ConfigProto()
+        config.gpu_options.allow_growth = True
+        with tf.Session(config=config) as sess:
             sess.run(init)
             
             if restore:
